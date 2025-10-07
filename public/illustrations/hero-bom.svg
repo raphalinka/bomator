@@ -1,0 +1,46 @@
+﻿<svg width="1200" height="900" viewBox="0 0 1200 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366F1" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0.9"/>
+    </linearGradient>
+    <filter id="blur" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="40"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="900" fill="#0B1220"/>
+  <g opacity="0.35" filter="url(#blur)">
+    <circle cx="280" cy="180" r="180" fill="url(#g1)"/>
+    <circle cx="980" cy="240" r="220" fill="url(#g1)"/>
+    <circle cx="620" cy="720" r="260" fill="url(#g1)"/>
+  </g>
+
+  <!-- pseudo karta BOM -->
+  <g transform="translate(250,180)">
+    <rect x="0" y="0" rx="24" ry="24" width="700" height="500" fill="#0F172A" stroke="#334155" stroke-opacity="0.4"/>
+    <rect x="0" y="0" width="700" height="48" fill="#111827"/>
+    <text x="20" y="30" font-family="Inter,system-ui" font-size="14" fill="#94A3B8">Result · 38 items · €212.40</text>
+
+    <g font-family="Inter,system-ui" font-size="13">
+      <text x="20" y="90" fill="#E5E7EB">Heating element 600W 230V</text>
+      <text x="520" y="90" fill="#A5B4FC">€42.00/pc</text>
+      <text x="20" y="130" fill="#E5E7EB">Bimetal thermostat 250°C</text>
+      <text x="520" y="130" fill="#A5B4FC">€18.50</text>
+      <text x="20" y="170" fill="#E5E7EB">Silicone wire 1.5mm²</text>
+      <text x="520" y="170" fill="#A5B4FC">€4.20/m</text>
+      <text x="20" y="210" fill="#E5E7EB">Stainless steel sheet 1mm</text>
+      <text x="520" y="210" fill="#A5B4FC">€55.00</text>
+    </g>
+  </g>
+
+  <!-- „rozsypane” części -->
+  <g fill="#CBD5E1" fill-opacity="0.8">
+    <rect x="110" y="320" width="74" height="12" rx="6"/>
+    <rect x="1040" y="540" width="70" height="12" rx="6"/>
+    <rect x="940" y="720" width="90" height="12" rx="6"/>
+    <circle cx="190" cy="640" r="8"/>
+    <circle cx="230" cy="662" r="6"/>
+    <circle cx="270" cy="630" r="7"/>
+  </g>
+</svg>

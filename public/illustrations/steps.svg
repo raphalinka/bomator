@@ -1,0 +1,31 @@
+﻿<svg width="1200" height="360" viewBox="0 0 1200 360" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="360" fill="none"/>
+  <g transform="translate(60,40)">
+    <rect width="320" height="280" rx="24" fill="#0F172A" stroke="#334155" stroke-opacity="0.4"/>
+    <text x="24" y="40" font-family="Inter,system-ui" font-size="16" fill="#E5E7EB">1 · Describe the device</text>
+    <rect x="24" y="70" width="272" height="120" rx="12" fill="#111827" stroke="#334155" stroke-opacity="0.4"/>
+    <text x="36" y="110" font-family="Inter,system-ui" font-size="13" fill="#94A3B8">Two-slice toaster, 230V, 600W each, thermostat…</text>
+  </g>
+  <g transform="translate(440,40)">
+    <rect width="320" height="280" rx="24" fill="#0F172A" stroke="#334155" stroke-opacity="0.4"/>
+    <text x="24" y="40" font-family="Inter,system-ui" font-size="16" fill="#E5E7EB">2 · AI composes BOM</text>
+    <rect x="24" y="70" width="272" height="160" rx="12" fill="#111827" stroke="#334155" stroke-opacity="0.4"/>
+    <g font-family="Inter,system-ui" font-size="13" fill="#E5E7EB">
+      <text x="36" y="106">• Heating element ×2</text>
+      <text x="36" y="130">• Bimetal thermostat ×1</text>
+      <text x="36" y="154">• Silicone wire 1.5mm² ×2m</text>
+      <text x="36" y="178">• SS sheet 1mm ×1</text>
+    </g>
+  </g>
+  <g transform="translate(820,40)">
+    <rect width="320" height="280" rx="24" fill="#0F172A" stroke="#334155" stroke-opacity="0.4"/>
+    <text x="24" y="40" font-family="Inter,system-ui" font-size="16" fill="#E5E7EB">3 · Links & prices</text>
+    <rect x="24" y="70" width="272" height="160" rx="12" fill="#111827" stroke="#334155" stroke-opacity="0.4"/>
+    <g font-family="Inter,system-ui" font-size="13">
+      <text x="36" y="106" fill="#E5E7EB">Parts4U · Thermostat</text>
+      <text x="36" y="130" fill="#A5B4FC">€18.50</text>
+      <text x="36" y="162" fill="#E5E7EB">ElectroVendor · Heating 600W</text>
+      <text x="36" y="186" fill="#A5B4FC">€42.00</text>
+    </g>
+  </g>
+</svg>
