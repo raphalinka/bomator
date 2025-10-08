@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 
 import OpenAI from "openai";
 
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type BomItem = {
   part: string;
@@ -27,63 +27,67 @@ export async function POST(req: Request) {
   try {
     const { prompt, currency = "EUR" } = await req.json();
 
-    if (!client.apiKey) {
+    if (!process.env.OPENAI_API_KEY) {
       return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), { status: 500 });
     }
 
-    const schema = {
-      type: "object",
-      additionalProperties: false,
-      required: ["title", "currency", "items", "disclaimer"],
-      properties: {
-        title: { type: "string" },
-        currency: { type: "string", enum: ["EUR", "USD", "GBP"] },
-        items: {
-          type: "array",
-          items: {
-            type: "object",
-            additionalProperties: false,
-            required: ["part","qty","unit","spec","suggested_product","supplier","link","unit_price"],
-            properties: {
-              part: { type: "string" },
-              qty: { type: "number" },
-              unit: { type: "string" },
-              spec: { type: "string" },
-              suggested_product: { type: "string" },
-              supplier: { type: "string" },
-              link: { type: "string" },
-              unit_price: { type: "number" },
-              notes: { type: "string" }
-            }
-          }
-        },
-        disclaimer: { type: "string" }
-      }
-    };
-
     const system = [
       "You are a hardware sourcing assistant that generates complete Bills of Materials (BOM).",
-      "Return strictly valid JSON following the provided JSON Schema.",
-      "Whenever possible include specific, buyable products (SKU/MPN) and supplier links.",
-      "Prices should be realistic estimates in the requested currency; if unsure, approximate.",
-      "Never include markdown fences."
+      "Return STRICT JSON (no markdown) that matches this shape:",
+      JSON.stringify({
+        title: "string",
+        currency: "EUR|USD|GBP",
+        items: [{
+          part: "string",
+          qty: 1,
+          unit: "pcs",
+          spec: "string",
+          suggested_product: "string",
+          supplier: "string",
+          link: "https://...",
+          unit_price: 0
+        }],
+        disclaimer: "string"
+      }),
+      "Always include specific, buyable products where possible (SKU/MPN) and realistic unit prices in the requested currency."
     ].join(" ");
 
-    const user = `Task: Create a complete BOM. Device description: ${prompt}. Currency: ${currency}.`;
+    const user = `Task: Create a complete BOM.\nDevice description: ${prompt}\nCurrency: ${currency}\nReturn ONLY valid JSON.`;
 
-    const resp = await client.responses.create({
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      input: `${system}\n\n${user}`,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "bom", schema, strict: true }
-      }
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      // wymusza czysty JSON (SDK/typy wspierają to stabilnie)
+      response_format: { type: "json_object" },
+      temperature: 0.4,
     });
 
-    const text = (resp as { output_text?: string }).output_text || "";
-    const data = JSON.parse(text) as BomResponse;
+    const content = completion.choices[0]?.message?.content || "{}";
+    // Zabezpieczenie parsowania:
+    const data = JSON.parse(content) as Partial<BomResponse>;
 
-    return new Response(JSON.stringify(data), {
+    // Minimalna walidacja i uzupełnienia:
+    const safe: BomResponse = {
+      title: data.title ?? "Generated BOM",
+      currency: (["EUR","USD","GBP"] as const).includes((data.currency as any)) ? (data.currency as BomResponse["currency"]) : currency,
+      items: Array.isArray(data.items) ? data.items.map((it: any) => ({
+        part: String(it?.part ?? ""),
+        qty: Number(it?.qty ?? 1),
+        unit: String(it?.unit ?? "pcs"),
+        spec: String(it?.spec ?? ""),
+        suggested_product: String(it?.suggested_product ?? ""),
+        supplier: String(it?.supplier ?? ""),
+        link: String(it?.link ?? ""),
+        unit_price: Number(it?.unit_price ?? 0),
+        notes: it?.notes ? String(it.notes) : undefined,
+      })) : [],
+      disclaimer: String(data.disclaimer ?? "Prices and availability are indicative; verify critical components with suppliers.")
+    };
+
+    return new Response(JSON.stringify(safe), {
       status: 200,
       headers: { "content-type": "application/json" }
     });
