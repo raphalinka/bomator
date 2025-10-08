@@ -11,14 +11,27 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // oblicz docelowy URL w runtime – działa i w dev, i na Vercel
+  const origin =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const redirectTo = `${origin}/auth/callback`;
+
   const signInWithGoogle = async () => {
-    await supabase.auth.signInWithOAuth({ provider: "google" });
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
   };
 
   const signInWithMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({ email });
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: redirectTo },
+    });
     setLoading(false);
     if (!error) setSent(true); else alert(error.message);
   };
