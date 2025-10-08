@@ -11,7 +11,10 @@ export async function GET(req: Request) {
 
   if (code) {
     const supabase = createRouteHandlerClient({ cookies });
-    await supabase.auth.exchangeCodeForSession(code);
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    console.log("exchangeCodeForSession:", { hasCode: !!code, error: error?.message ?? null, sessionUserId: data?.user?.id ?? null });
+  } else {
+    console.log("callback hit without code");
   }
 
   return NextResponse.redirect(new URL("/dashboard", url.origin));
