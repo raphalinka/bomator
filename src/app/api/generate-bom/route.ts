@@ -2,13 +2,17 @@
 export const dynamic = "force-dynamic";
 
 import OpenAI from "openai";
-import { resolveBestProductUrl } from "@/lib/link-resolver";
+import { resolveBestProductUrl, buildSearchLinks } from "@/lib/link-resolver";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const currencies = ["EUR", "USD", "GBP"] as const;
 type Currency = typeof currencies[number];
 type LinkStatus = "ok" | "broken" | "missing";
+
+type SearchLinks = {
+  digikey: string; mouser: string; rs: string; farnell: string; newark: string; amazon: string; aliexpress: string;
+};
 
 type BomItem = {
   part: string;
@@ -22,6 +26,7 @@ type BomItem = {
   notes?: string;
   link_status?: LinkStatus;
   alt_link?: string;
+  search_links?: SearchLinks; // <— NOWE: zawsze dokładamy przyciskowe wyszukiwarki
 };
 
 type BomResponse = {
@@ -100,25 +105,33 @@ async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
   const results: BomItem[] = await Promise.all(
     limited.map(async (it): Promise<BomItem> => {
       const link = canonicalize(it.link);
+      const mpnGuess = (it.suggested_product || it.part).trim();
+      const searchLinks = buildSearchLinks(mpnGuess);
+
       if (!link) {
         return {
           ...it,
           link: "",
           link_status: "missing",
-          alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim()),
+          alt_link: supplierSearchFallback(it.supplier || "", `${mpnGuess} ${it.spec || ""}`.trim()),
+          search_links: searchLinks,
         };
       }
       const st = await checkUrl(link);
-      if (st === "ok") return { ...it, link, link_status: "ok" };
+      if (st === "ok") return { ...it, link, link_status: "ok", search_links: searchLinks };
       return {
         ...it,
         link,
         link_status: "broken",
-        alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim()),
+        alt_link: supplierSearchFallback(it.supplier || "", `${mpnGuess} ${it.spec || ""}`.trim()),
+        search_links: searchLinks,
       };
     })
   );
-  return results.concat(items.slice(60));
+  return results.concat(items.slice(60).map((it) => {
+    const mpnGuess = (it.suggested_product || it.part).trim();
+    return { ...it, search_links: buildSearchLinks(mpnGuess) };
+  }));
 }
 
 // —— MAIN —— //
@@ -197,11 +210,10 @@ export async function POST(req: Request) {
       };
     }
 
-    // —— PASS 2: naprawa złych/missing linków przez site:domain + MPN i ponowną weryfikację —— //
+    // —— PASS 2: ZAWSZE spróbuj odbudować link po MPN + supplier; jeśli trafiony product-like — podmień —— //
     {
       const repaired = await Promise.all(
         safe.items.map(async (it): Promise<BomItem> => {
-          if (it.link_status === "ok") return it;
           const mpnGuess = (it.suggested_product || it.part).trim();
           const best = await resolveBestProductUrl(it.supplier || "", mpnGuess, mpnGuess);
           if (best) return { ...it, link: best, link_status: "ok" as const };
