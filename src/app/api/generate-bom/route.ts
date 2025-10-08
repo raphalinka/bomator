@@ -1,37 +1,94 @@
-﻿export const dynamic = "force-dynamic";
+﻿export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type Item = {
+import OpenAI from "openai";
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+type BomItem = {
   part: string;
-  specification?: string;
-  quantity: number;
+  qty: number;
   unit: string;
-  unitPrice?: number; // in EUR
-  supplier?: string;
-  link?: string;
+  spec: string;
+  suggested_product: string;
+  supplier: string;
+  link: string;
+  unit_price: number;
+  notes?: string;
+};
+type BomResponse = {
+  title: string;
+  currency: "EUR" | "USD" | "GBP";
+  items: BomItem[];
+  disclaimer: string;
 };
 
 export async function POST(req: Request) {
-  const { prompt } = await req.json();
+  try {
+    const { prompt, currency = "EUR" } = await req.json();
 
-  // Very simple mock logic just to have something deterministic
-  const items: Item[] = [
-    { part: "Heating element 600W 230V", quantity: 2, unit: "pcs", unitPrice: 42, supplier: "ElectroVendor", link: "https://example.com/he600" },
-    { part: "Bimetal thermostat 250°C", quantity: 1, unit: "pc", unitPrice: 18.5, supplier: "Parts4U", link: "https://example.com/thermo250" },
-    { part: "Silicone wire 1.5mm²", quantity: 2, unit: "m", unitPrice: 4.2, supplier: "WireStore", link: "https://example.com/silwire" },
-    { part: "Stainless steel sheet 1mm", quantity: 1, unit: "pc", unitPrice: 55, supplier: "MetalMart", link: "https://example.com/steel1mm" },
-  ];
+    if (!client.apiKey) {
+      return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), { status: 500 });
+    }
 
-  const subtotal = items.reduce((s, it) => s + (it.unitPrice ?? 0) * it.quantity, 0);
-  const response = {
-    prompt,
-    currency: "EUR",
-    itemCount: items.length,
-    subtotal,
-    items,
-  };
+    const schema = {
+      type: "object",
+      additionalProperties: false,
+      required: ["title", "currency", "items", "disclaimer"],
+      properties: {
+        title: { type: "string" },
+        currency: { type: "string", enum: ["EUR", "USD", "GBP"] },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["part","qty","unit","spec","suggested_product","supplier","link","unit_price"],
+            properties: {
+              part: { type: "string" },
+              qty: { type: "number" },
+              unit: { type: "string" },
+              spec: { type: "string" },
+              suggested_product: { type: "string" },
+              supplier: { type: "string" },
+              link: { type: "string" },
+              unit_price: { type: "number" },
+              notes: { type: "string" }
+            }
+          }
+        },
+        disclaimer: { type: "string" }
+      }
+    };
 
-  return new Response(JSON.stringify(response), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+    const system = [
+      "You are a hardware sourcing assistant that generates complete Bills of Materials (BOM).",
+      "Return strictly valid JSON following the provided JSON Schema.",
+      "Whenever possible include specific, buyable products (SKU/MPN) and supplier links.",
+      "Prices should be realistic estimates in the requested currency; if unsure, approximate.",
+      "Never include markdown fences."
+    ].join(" ");
+
+    const user = `Task: Create a complete BOM. Device description: ${prompt}. Currency: ${currency}.`;
+
+    const resp = await client.responses.create({
+      model: "gpt-4o-mini",
+      input: `${system}\n\n${user}`,
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "bom", schema, strict: true }
+      }
+    });
+
+    const text = (resp as { output_text?: string }).output_text || "";
+    const data = JSON.parse(text) as BomResponse;
+
+    return new Response(JSON.stringify(data), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  } catch (err) {
+    const msg = (err as Error)?.message || "OpenAI request failed";
+    return new Response(JSON.stringify({ error: msg }), { status: 500 });
+  }
 }
