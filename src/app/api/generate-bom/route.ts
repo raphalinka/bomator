@@ -18,6 +18,8 @@ type BomItem = {
   link: string;
   unit_price: number;
   notes?: string;
+  link_status?: "ok" | "broken" | "missing";
+  alt_link?: string;
 };
 
 type BomResponse = {
@@ -30,20 +32,16 @@ type BomResponse = {
 function isRecord(u: unknown): u is Record<string, unknown> {
   return typeof u === "object" && u !== null && !Array.isArray(u);
 }
-
 function asString(u: unknown, fallback = ""): string {
   return typeof u === "string" ? u : u == null ? fallback : String(u);
 }
-
 function asNumber(u: unknown, fallback = 0): number {
   const n = typeof u === "number" ? u : Number(u);
   return Number.isFinite(n) ? n : fallback;
 }
-
 function isCurrency(u: unknown): u is Currency {
   return typeof u === "string" && (currencies as readonly string[]).includes(u);
 }
-
 function coerceItem(u: unknown): BomItem {
   const r: Record<string, unknown> = isRecord(u) ? u : {};
   return {
@@ -59,6 +57,71 @@ function coerceItem(u: unknown): BomItem {
   };
 }
 
+// ——— LINK VALIDATION ———
+const FETCH_TIMEOUT_MS = 5000;
+
+function canonicalize(url: string): string {
+  let s = url.trim();
+  if (!s) return "";
+  if (!/^https?:\/\//i.test(s)) s = "https://" + s;
+  return s;
+}
+function supplierSearchFallback(supplier: string, query: string) {
+  const q = encodeURIComponent(query);
+  const sup = supplier.toLowerCase();
+  if (sup.includes("digikey")) return `https://www.digikey.com/en/products/result?k=${q}`;
+  if (sup.includes("mouser")) return `https://www.mouser.com/c/?q=${q}`;
+  if (sup.includes("rs")) return `https://rs-online.com/search?searchTerm=${q}`;
+  if (sup.includes("farnell") || sup.includes("newark")) return `https://www.farnell.com/w/search?st=${q}`;
+  if (sup.includes("aliexpress")) return `https://www.aliexpress.com/w/wholesale-${q}.html`;
+  if (sup.includes("amazon")) return `https://www.amazon.com/s?k=${q}`;
+  return `https://duckduckgo.com/?q=${q}`;
+}
+async function checkUrl(url: string): Promise<"ok"|"broken"> {
+  const target = canonicalize(url);
+  if (!target) return "broken";
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    // HEAD by default; część serwisów nie wspiera — fallback do GET
+    let r = await fetch(target, { method: "HEAD", redirect: "follow", signal: ctrl.signal });
+    if (r.status >= 200 && r.status < 400) return "ok";
+    // retry GET
+    r = await fetch(target, { method: "GET", redirect: "follow", signal: ctrl.signal });
+    if (r.status >= 200 && r.status < 400) return "ok";
+    return "broken";
+  } catch {
+    return "broken";
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
+  const limited = items.slice(0, 60); // safety cap
+  const results = await Promise.all(limited.map(async (it) => {
+    const link = canonicalize(it.link);
+    if (!link) {
+      return {
+        ...it,
+        link_status: "missing",
+        alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim())
+      };
+    }
+    const st = await checkUrl(link);
+    if (st === "ok") return { ...it, link: link, link_status: "ok" };
+    return {
+      ...it,
+      link: link,
+      link_status: "broken",
+      alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim())
+    };
+  }));
+  // dołącz ewentualny ogon bez sprawdzania (jeśli >60)
+  return results.concat(items.slice(60));
+}
+
+// ——— MAIN ———
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as unknown;
@@ -72,7 +135,7 @@ export async function POST(req: Request) {
 
     const system = [
       "You are a hardware sourcing assistant that generates complete Bills of Materials (BOM).",
-      "Return STRICT JSON (no markdown) that matches this shape:",
+      "Return STRICT JSON (no markdown) matching this shape:",
       JSON.stringify({
         title: "string",
         currency: "EUR|USD|GBP",
@@ -88,7 +151,9 @@ export async function POST(req: Request) {
         }],
         disclaimer: "string"
       }),
-      "Always include specific, buyable products (SKU/MPN) and realistic unit prices in the requested currency."
+      "Prefer reputable suppliers (Digi-Key, Mouser, RS Components, Farnell/Newark, Amazon, AliExpress).",
+      "Use direct product pages (not search pages) where possible.",
+      "Include realistic unit prices in the requested currency.",
     ].join(" ");
 
     const user = `Task: Create a complete BOM.\nDevice description: ${prompt}\nCurrency: ${currency}\nReturn ONLY valid JSON.`;
@@ -114,13 +179,14 @@ export async function POST(req: Request) {
     };
 
     if (isRecord(parsed)) {
+      const rawItems = Array.isArray((parsed as Record<string, unknown>).items)
+        ? ((parsed as Record<string, unknown>).items as unknown[]).map(coerceItem)
+        : [];
       safe = {
         title: asString(parsed.title, "Generated BOM"),
         currency: isCurrency(parsed.currency) ? parsed.currency : currency,
-        items: Array.isArray((parsed as Record<string, unknown>).items)
-          ? ((parsed as Record<string, unknown>).items as unknown[]).map(coerceItem)
-          : [],
-        disclaimer: asString(parsed.disclaimer, "Prices and availability are indicative; verify critical components with suppliers.")
+        items: await annotateLinks(rawItems),
+        disclaimer: asString(parsed.disclaimer, safe.disclaimer),
       };
     }
 

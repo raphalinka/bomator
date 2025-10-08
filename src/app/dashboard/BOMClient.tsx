@@ -4,6 +4,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
+type LinkStatus = "ok" | "broken" | "missing";
 type BomItem = {
   part: string;
   qty: number;
@@ -14,6 +15,8 @@ type BomItem = {
   link: string;
   unit_price: number;
   notes?: string;
+  link_status?: LinkStatus;
+  alt_link?: string;
 };
 
 type BomApiResponse = {
@@ -37,6 +40,12 @@ export default function BOMClient() {
     [data]
   );
 
+  const sortedItems = useMemo(() => {
+    if (!data) return [];
+    const rank = (s?: LinkStatus) => (s === "ok" ? 0 : s === "broken" ? 1 : 2);
+    return [...data.items].sort((a, b) => rank(a.link_status) - rank(b.link_status));
+  }, [data]);
+
   const generate = async () => {
     setLoading(true);
     setError(null);
@@ -52,7 +61,6 @@ export default function BOMClient() {
         throw new Error(txt || `HTTP ${res.status}`);
       }
       const json = (await res.json()) as BomApiResponse;
-      // Prosty sanity-check
       if (!json || !Array.isArray(json.items)) {
         throw new Error("Invalid response shape from /api/generate-bom");
       }
@@ -77,7 +85,7 @@ export default function BOMClient() {
         unit: it.unit,
         unitPrice: it.unit_price,
         supplier: it.supplier,
-        link: it.link,
+        link: it.link_status === "ok" ? it.link : (it.alt_link || it.link),
       })),
       subtotal,
     };
@@ -147,7 +155,7 @@ export default function BOMClient() {
                 </tr>
               </thead>
               <tbody>
-                {data.items.map((it, i) => (
+                {sortedItems.map((it, i) => (
                   <tr key={i} className="border-t border-white/10">
                     <td className="px-4 py-2">{it.part}</td>
                     <td className="px-4 py-2">{it.spec}</td>
@@ -161,17 +169,30 @@ export default function BOMClient() {
                     </td>
                     <td className="px-4 py-2">{it.supplier}</td>
                     <td className="px-4 py-2">
-                      {it.link ? (
-                        <a
-                          className="text-indigo-300 underline"
-                          target="_blank"
-                          rel="noreferrer"
-                          href={it.link}
-                        >
+                      {it.link_status === "ok" && it.link ? (
+                        <a className="text-emerald-300 underline" target="_blank" rel="noreferrer" href={it.link}>
                           Open
                         </a>
+                      ) : it.alt_link ? (
+                        <a className="text-amber-300 underline" target="_blank" rel="noreferrer" href={it.alt_link}>
+                          Search
+                        </a>
                       ) : (
-                        ""
+                        <span className="text-rose-300">No link</span>
+                      )}
+                      {it.link_status && (
+                        <span
+                          className={
+                            "ml-2 rounded px-1.5 py-0.5 text-[10px] " +
+                            (it.link_status === "ok"
+                              ? "bg-emerald-500/20 text-emerald-300"
+                              : it.link_status === "broken"
+                              ? "bg-amber-500/20 text-amber-300"
+                              : "bg-rose-500/20 text-rose-300")
+                          }
+                        >
+                          {it.link_status}
+                        </span>
                       )}
                     </td>
                   </tr>
