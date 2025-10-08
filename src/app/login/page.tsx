@@ -5,23 +5,19 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import NavBar from "@/components/NavBar";
 
+const ORIGIN = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const REDIRECT_TO = `${ORIGIN}/auth/callback`;
+
 export default function LoginPage() {
   const supabase = supabaseBrowser();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // oblicz docelowy URL w runtime – działa i w dev, i na Vercel
-  const origin =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const redirectTo = `${origin}/auth/callback`;
-
   const signInWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo },
+      options: { redirectTo: REDIRECT_TO },
     });
   };
 
@@ -30,7 +26,7 @@ export default function LoginPage() {
     setLoading(true);
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: redirectTo },
+      options: { emailRedirectTo: REDIRECT_TO },
     });
     setLoading(false);
     if (!error) setSent(true); else alert(error.message);
