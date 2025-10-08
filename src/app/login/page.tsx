@@ -14,24 +14,27 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // 1) JEŚLI jesteśmy na innym hostcie (np. preview), przenieś na kanoniczny /login
   const needsHop = useMemo(() => {
     if (typeof window === "undefined") return false;
-    const here = window.location.origin;
-    return here !== ORIGIN;
+    return window.location.origin !== ORIGIN;
   }, []);
 
   useEffect(() => {
-    if (needsHop) {
-      window.location.href = `${ORIGIN}/login`;
-    }
+    if (needsHop) window.location.href = `${ORIGIN}/login`;
   }, [needsHop]);
 
   const signInWithGoogle = async () => {
-    await supabase.auth.signInWithOAuth({
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: { redirectTo: REDIRECT_TO },
     });
+    if (error) {
+      alert(`OAuth error: ${error.message}`);
+      console.error(error);
+    } else {
+      // supabase zazwyczaj robi redirect natychmiast; ten console.log to tylko fallback
+      console.log("OAuth started:", data);
+    }
   };
 
   const signInWithMagicLink = async (e: React.FormEvent) => {
@@ -51,32 +54,15 @@ export default function LoginPage() {
       <div className="container py-16 grid place-items-center">
         <div className="card w-full max-w-md">
           <h1 className="text-2xl font-bold">Sign in</h1>
-          <p className="mt-2 text-slate-300 text-sm">
-            Use Google or get a magic link.
-          </p>
-
-          <Button onClick={signInWithGoogle} className="w-full mt-6">
-            Continue with Google
-          </Button>
-
+          <p className="mt-2 text-slate-300 text-sm">Use Google or get a magic link.</p>
+          <Button onClick={signInWithGoogle} className="w-full mt-6">Continue with Google</Button>
           <div className="my-6 h-px bg-white/10" />
-
           {sent ? (
-            <div className="text-sm text-emerald-400">
-              Magic link sent! Check your inbox.
-            </div>
+            <div className="text-sm text-emerald-400">Magic link sent! Check your inbox.</div>
           ) : (
             <form onSubmit={signInWithMagicLink} className="space-y-3">
-              <Input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-              <Button variant="ghost" disabled={loading} className="w-full">
-                {loading ? "Sending…" : "Email me a magic link"}
-              </Button>
+              <Input type="email" required value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="you@example.com" />
+              <Button variant="ghost" disabled={loading} className="w-full">{loading ? "Sending…" : "Email me a magic link"}</Button>
             </form>
           )}
         </div>
