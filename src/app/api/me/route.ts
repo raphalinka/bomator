@@ -1,0 +1,30 @@
+﻿export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+import { createServerClient } from "@supabase/ssr";
+
+export async function GET() {
+  const store = await cookies();
+  const supabase = createServerClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return store.getAll().map((c) => ({ name: c.name, value: c.value?.slice(0, 10) + "…" }));
+        },
+        setAll(list) {
+          list.forEach(({ name, value, options }) => store.set(name, value, options));
+        },
+      },
+    }
+  );
+
+  const { data: { user }, error } = await supabase.auth.getUser();
+  return NextResponse.json({
+    user,
+    error: error?.message ?? null,
+  });
+}
