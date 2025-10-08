@@ -18,7 +18,7 @@ export function Slider({
   className,
   onValueChange,
 }: SliderProps) {
-  const val = Array.isArray(value) && typeof value[0] === "number" ? value[0] : min;
+  const val = Array.isArray(value) ? value[0] : min;
 
   return (
     <div className={className} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -28,10 +28,7 @@ export function Slider({
         max={max}
         step={step}
         value={val}
-        onChange={(e) => {
-          const n = Number(e.target.value);
-          onValueChange?.([n]);
-        }}
+        onChange={(e) => onValueChange?.([Number(e.target.value)])}
         className="w-full"
       />
       <span className="text-xs text-slate-300 tabular-nums">{val}</span>

@@ -61,7 +61,9 @@ export default function BOMClient() {
       if (!json || !Array.isArray(json.items)) throw new Error("Invalid response");
       setData(json);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to generate");
+      const msg = e instanceof Error ? e.message : "Failed to generate";
+      setError(msg);
+      console.error("[BOM] generate error:", e);
     } finally {
       setLoading(false);
     }
@@ -88,6 +90,11 @@ export default function BOMClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) {
+      const t = await res.text();
+      alert(`Export failed: ${t}`);
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -186,4 +193,3 @@ export default function BOMClient() {
     </section>
   );
 }
-
