@@ -2,19 +2,32 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
+import { createServerClient } from "@supabase/ssr";
 import NavBar from "@/components/NavBar";
 import Banner from "./Banner";
 import BOMClient from "./BOMClient";
 import { SignOutButton } from "./signout";
 
 export default async function DashboardPage() {
-  const supabase = createServerComponentClient({ cookies });
-  const { data: { user } } = await supabase.auth.getUser();
+  const store = await cookies();
+  const supabase = createServerClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_ANON_KEY!,
+    {
+      cookieEncoding: "base64url",
+      cookies: {
+        getAll() {
+          return store.getAll().map((c) => ({ name: c.name, value: c.value }));
+        },
+        setAll(list) {
+          list.forEach(({ name, value, options }) => store.set(name, value, options));
+        },
+      },
+    }
+  );
 
-  if (!user) {
-    redirect("/login");
-  }
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
 
   return (
     <main>
@@ -23,7 +36,7 @@ export default async function DashboardPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Dashboard</h1>
           <div className="text-sm text-slate-300 flex items-center gap-3">
-            <span>{user?.email}</span>
+            <span>{user.email}</span>
             <SignOutButton />
           </div>
         </div>

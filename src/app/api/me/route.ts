@@ -11,9 +11,10 @@ export async function GET() {
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_ANON_KEY!,
     {
+      cookieEncoding: "base64url",
       cookies: {
         getAll() {
-          return store.getAll().map((c) => ({ name: c.name, value: c.value?.slice(0, 10) + "…" }));
+          return store.getAll().map((c) => ({ name: c.name, value: c.value }));
         },
         setAll(list) {
           list.forEach(({ name, value, options }) => store.set(name, value, options));
@@ -21,10 +22,6 @@ export async function GET() {
       },
     }
   );
-
   const { data: { user }, error } = await supabase.auth.getUser();
-  return NextResponse.json({
-    user,
-    error: error?.message ?? null,
-  });
+  return NextResponse.json({ user, error: error?.message ?? null });
 }
