@@ -5,8 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import NavBar from "@/components/NavBar";
 
-const SITE = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
 export default function LoginPage() {
   const supabase = supabaseBrowser();
   const [email, setEmail] = useState("");
@@ -14,19 +12,13 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   const signInWithGoogle = async () => {
-    await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${SITE}/auth/callback` },
-    });
+    await supabase.auth.signInWithOAuth({ provider: "google" });
   };
 
   const signInWithMagicLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${SITE}/auth/callback` },
-    });
+    const { error } = await supabase.auth.signInWithOtp({ email });
     setLoading(false);
     if (!error) setSent(true); else alert(error.message);
   };
