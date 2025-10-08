@@ -16,19 +16,35 @@ export default function BOMClient() {
   const generate = async () => {
     setLoading(true); setError(null);
     try {
-      const res = await fetch("/api/generate-bom", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
+      const res = await fetch("/api/generate-bom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
       if (!res.ok) throw new Error(await res.text());
-      setData(await res.json());
-    } catch (e:any) { setError(e.message ?? "Failed to generate"); }
-    finally { setLoading(false); }
+      const json = (await res.json()) as BomResponse;
+      setData(json);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to generate");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const exportXlsx = async () => {
     if (!data) return;
-    const res = await fetch("/api/export-xlsx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
-    if (!res.ok) return alert("Export failed");
-    const blob = await res.blob(); const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "bom.xlsx"; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    const res = await fetch("/api/export-xlsx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) { alert("Export failed"); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "bom.xlsx";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -65,7 +81,7 @@ export default function BOMClient() {
                     <td className="px-4 py-2">{it.unitPrice != null ? `${data.currency} ${it.unitPrice}` : ""}</td>
                     <td className="px-4 py-2">{it.supplier ?? ""}</td>
                     <td className="px-4 py-2">
-                      {it.link ? <a className="text-brand-400 underline" target="_blank" rel="noreferrer" href={it.link}>Open</a> : ""}
+                      {it.link ? <a className="text-indigo-300 underline" target="_blank" rel="noreferrer" href={it.link}>Open</a> : ""}
                     </td>
                   </tr>
                 ))}
