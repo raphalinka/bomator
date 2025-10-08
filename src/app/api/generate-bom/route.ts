@@ -158,7 +158,7 @@ export async function POST(req: Request) {
       }),
       "Prefer reputable suppliers (Digi-Key, Mouser, RS Components, Farnell/Newark, Amazon, AliExpress).",
       "Use direct product pages (not search pages) where possible.",
-      "Include realistic unit prices in the requested currency.",
+      "Include realistic unit prices in the requested currency. Always include explicit Manufacturer Part Numbers (MPNs) where applicable, and prefer distributor product detail pages (not category/search pages). Ensure the suggested_product contains the MPN if available.",
     ].join(" ");
 
     const user =
@@ -166,7 +166,7 @@ export async function POST(req: Request) {
       `Device description: ${prompt}\n` +
       `Currency: ${currency}\n` +
       `Level of detail: ${detail}/5 (1 = rough modules, 5 = exhaustive itemization)\n` +
-      `Return ONLY valid JSON.`;
+      `Return ONLY valid JSON. The "suggested_product" should include the MPN/SKU if possible.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -209,3 +209,4 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: msg }), { status: 500 });
   }
 }
+
