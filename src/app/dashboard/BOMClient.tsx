@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Slider } from "@/components/ui/slider";
 
 type LinkStatus = "ok" | "broken" | "missing";
 type BomItem = {
@@ -27,12 +28,11 @@ type BomApiResponse = {
 };
 
 export default function BOMClient() {
-  const [prompt, setPrompt] = useState(
-    "I need a BOM for a two-slice toaster with thermostat and stainless-steel housing"
-  );
+  const [prompt, setPrompt] = useState("I need a BOM for a two-slice toaster with thermostat");
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<BomApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [detail, setDetail] = useState(3);
 
   const itemCount = useMemo(() => data?.items.length ?? 0, [data]);
   const subtotal = useMemo(
@@ -54,20 +54,14 @@ export default function BOMClient() {
       const res = await fetch("/api/generate-bom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, currency: "EUR" }),
+        body: JSON.stringify({ prompt, currency: "EUR", detail }),
       });
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error(await res.text());
       const json = (await res.json()) as BomApiResponse;
-      if (!json || !Array.isArray(json.items)) {
-        throw new Error("Invalid response shape from /api/generate-bom");
-      }
+      if (!json || !Array.isArray(json.items)) throw new Error("Invalid response");
       setData(json);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to generate");
-      console.error("[BOM] generate error:", e);
+    } catch (e: any) {
+      setError(e.message);
     } finally {
       setLoading(false);
     }
@@ -94,11 +88,6 @@ export default function BOMClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      const t = await res.text();
-      alert(`Export failed: ${t}`);
-      return;
-    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -120,6 +109,22 @@ export default function BOMClient() {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
         />
+        <div className="mt-4">
+          <label className="block font-semibold">
+            Level of detail: {detail}
+          </label>
+          <Slider
+            value={[detail]}
+            min={1}
+            max={5}
+            step={1}
+            onValueChange={(v) => setDetail(v[0])}
+            className="mt-2"
+          />
+          <p className="text-xs text-slate-400 mt-1">
+            1 = rough • 3 = balanced • 5 = ultra-detailed
+          </p>
+        </div>
         <div className="mt-3 flex gap-3">
           <Button onClick={generate} disabled={loading}>
             {loading ? "Generating…" : "Generate BOM"}
@@ -128,18 +133,13 @@ export default function BOMClient() {
             Download .xlsx
           </Button>
         </div>
-        {error && (
-          <div className="mt-3 text-sm text-rose-400 font-semibold">
-            {error}
-          </div>
-        )}
+        {error && <div className="mt-3 text-sm text-rose-400">{error}</div>}
       </Card>
 
       {data && (
         <Card className="mt-6 overflow-hidden">
           <div className="px-6 pt-6 text-sm text-slate-300">
-            <span className="font-semibold">{data.title}</span> • {itemCount} items • Subtotal: {data.currency}{" "}
-            {subtotal.toFixed(2)}
+            <span className="font-semibold">{data.title}</span> • {itemCount} items • Subtotal: {data.currency} {subtotal.toFixed(2)}
           </div>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-sm">
@@ -161,38 +161,16 @@ export default function BOMClient() {
                     <td className="px-4 py-2">{it.spec}</td>
                     <td className="px-4 py-2">{it.qty}</td>
                     <td className="px-4 py-2">{it.unit}</td>
-                    <td className="px-4 py-2">
-                      {it.unit_price != null ? `${data.currency} ${it.unit_price}` : ""}
-                    </td>
-                    <td className="px-4 py-2">
-                      {it.unit_price != null ? `${data.currency} ${(it.unit_price * it.qty).toFixed(2)}` : ""}
-                    </td>
+                    <td className="px-4 py-2">{it.unit_price ? `${data.currency} ${it.unit_price}` : ""}</td>
+                    <td className="px-4 py-2">{it.unit_price ? `${data.currency} ${(it.unit_price * it.qty).toFixed(2)}` : ""}</td>
                     <td className="px-4 py-2">{it.supplier}</td>
                     <td className="px-4 py-2">
                       {it.link_status === "ok" && it.link ? (
-                        <a className="text-emerald-300 underline" target="_blank" rel="noreferrer" href={it.link}>
-                          Open
-                        </a>
+                        <a className="text-emerald-300 underline" href={it.link} target="_blank" rel="noreferrer">Open</a>
                       ) : it.alt_link ? (
-                        <a className="text-amber-300 underline" target="_blank" rel="noreferrer" href={it.alt_link}>
-                          Search
-                        </a>
+                        <a className="text-amber-300 underline" href={it.alt_link} target="_blank" rel="noreferrer">Search</a>
                       ) : (
                         <span className="text-rose-300">No link</span>
-                      )}
-                      {it.link_status && (
-                        <span
-                          className={
-                            "ml-2 rounded px-1.5 py-0.5 text-[10px] " +
-                            (it.link_status === "ok"
-                              ? "bg-emerald-500/20 text-emerald-300"
-                              : it.link_status === "broken"
-                              ? "bg-amber-500/20 text-amber-300"
-                              : "bg-rose-500/20 text-rose-300")
-                          }
-                        >
-                          {it.link_status}
-                        </span>
                       )}
                     </td>
                   </tr>
