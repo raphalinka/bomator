@@ -60,8 +60,8 @@ export default function BOMClient() {
       const json = (await res.json()) as BomApiResponse;
       if (!json || !Array.isArray(json.items)) throw new Error("Invalid response");
       setData(json);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to generate");
     } finally {
       setLoading(false);
     }
@@ -186,3 +186,4 @@ export default function BOMClient() {
     </section>
   );
 }
+

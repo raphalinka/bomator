@@ -18,13 +18,7 @@ export function Slider({
   className,
   onValueChange,
 }: SliderProps) {
-  const [val, setVal] = React.useState<number>(Array.isArray(value) ? value[0] : min);
-
-  React.useEffect(() => {
-    if (Array.isArray(value) && typeof value[0] === "number" && value[0] !== val) {
-      setVal(value[0]);
-    }
-  }, [value?.[0]]); // keep in sync with parent
+  const val = Array.isArray(value) && typeof value[0] === "number" ? value[0] : min;
 
   return (
     <div className={className} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -36,7 +30,6 @@ export function Slider({
         value={val}
         onChange={(e) => {
           const n = Number(e.target.value);
-          setVal(n);
           onValueChange?.([n]);
         }}
         className="w-full"
