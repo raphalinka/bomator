@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import OpenAI from "openai";
+import { resolveBestProductUrl } from "@/lib/link-resolver";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -14,9 +15,9 @@ type BomItem = {
   qty: number;
   unit: string;
   spec: string;
-  suggested_product: string;
-  supplier: string;
-  link: string;
+  suggested_product: string; // include MPN/SKU if possible
+  supplier: string;          // distributor/manufacturer
+  link: string;              // product detail page if possible
   unit_price: number;
   notes?: string;
   link_status?: LinkStatus;
@@ -78,7 +79,7 @@ function supplierSearchFallback(supplier: string, query: string) {
   if (sup.includes("amazon")) return `https://www.amazon.com/s?k=${q}`;
   return `https://duckduckgo.com/?q=${q}`;
 }
-async function checkUrl(url: string): Promise<Extract<LinkStatus, "ok"|"broken">> {
+async function checkUrl(url: string): Promise<Extract<LinkStatus,"ok"|"broken">> {
   const target = canonicalize(url);
   if (!target) return "broken";
   const ctrl = new AbortController();
@@ -91,9 +92,7 @@ async function checkUrl(url: string): Promise<Extract<LinkStatus, "ok"|"broken">
     return "broken";
   } catch {
     return "broken";
-  } finally {
-    clearTimeout(t);
-  }
+  } finally { clearTimeout(t); }
 }
 
 async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
@@ -110,9 +109,7 @@ async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
         };
       }
       const st = await checkUrl(link);
-      if (st === "ok") {
-        return { ...it, link, link_status: "ok" };
-      }
+      if (st === "ok") return { ...it, link, link_status: "ok" };
       return {
         ...it,
         link,
@@ -121,7 +118,6 @@ async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
       };
     })
   );
-  // dołącz ogon bez sprawdzania (jeśli >60) — to nadal BomItem
   return results.concat(items.slice(60));
 }
 
@@ -149,16 +145,17 @@ export async function POST(req: Request) {
           qty: 1,
           unit: "pcs",
           spec: "string",
-          suggested_product: "string",
+          suggested_product: "string", // include MPN/SKU if possible
           supplier: "string",
-          link: "https://...",
+          link: "https://...",        // product detail page
           unit_price: 0
         }],
         disclaimer: "string"
       }),
       "Prefer reputable suppliers (Digi-Key, Mouser, RS Components, Farnell/Newark, Amazon, AliExpress).",
-      "Use direct product pages (not search pages) where possible.",
-      "Include realistic unit prices in the requested currency. Always include explicit Manufacturer Part Numbers (MPNs) where applicable, and prefer distributor product detail pages (not category/search pages). Ensure the suggested_product contains the MPN if available.",
+      "Use direct product detail pages (not search/category pages).",
+      "Include realistic unit prices in the requested currency.",
+      "Always include explicit Manufacturer Part Numbers (MPNs) where applicable, and ensure the suggested_product contains the MPN/SKU if available.",
     ].join(" ");
 
     const user =
@@ -166,7 +163,7 @@ export async function POST(req: Request) {
       `Device description: ${prompt}\n` +
       `Currency: ${currency}\n` +
       `Level of detail: ${detail}/5 (1 = rough modules, 5 = exhaustive itemization)\n` +
-      `Return ONLY valid JSON. The "suggested_product" should include the MPN/SKU if possible.`;
+      `Return ONLY valid JSON.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -200,6 +197,20 @@ export async function POST(req: Request) {
       };
     }
 
+    // —— PASS 2: naprawa złych/missing linków przez site:domain + MPN i ponowną weryfikację —— //
+    {
+      const repaired = await Promise.all(
+        safe.items.map(async (it): Promise<BomItem> => {
+          if (it.link_status === "ok") return it;
+          const mpnGuess = (it.suggested_product || it.part).trim();
+          const best = await resolveBestProductUrl(it.supplier || "", mpnGuess, mpnGuess);
+          if (best) return { ...it, link: best, link_status: "ok" as const };
+          return it;
+        })
+      );
+      safe.items = repaired;
+    }
+
     return new Response(JSON.stringify(safe), {
       status: 200,
       headers: { "content-type": "application/json" }
@@ -209,4 +220,3 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: msg }), { status: 500 });
   }
 }
-
