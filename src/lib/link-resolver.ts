@@ -29,16 +29,16 @@ export function preferredDomains(supplier: string): SupplierDomain[] {
 
 // Heurystyki: jak wyglądają karty produktu (nie listing)
 const productDetailPatterns: Record<string, RegExp> = {
-  "digikey.com": /https?:\/\/(?:www\.)?digikey\.com\/en\/products\/detail\/[^\/]+\/[^\/?#]+/i,
-  "mouser.com": /https?:\/\/(?:www\.)?mouser\.com\/ProductDetail\/[^\/?#]+/i,
-  "rs-online.com": /https?:\/\/(?:.*\.)?rs-online\.com\/[^?#]*\/p\/[^\/?#]+/i,
-  "farnell.com": /https?:\/\/(?:.*\.)?farnell\.com\/[^?#]*\/p\/[^\/?#]+/i,
-  "newark.com": /https?:\/\/(?:.*\.)?newark\.com\/[^?#]*\/p\/[^\/?#]+/i,
-  "ti.com": /https?:\/\/(?:www\.)?ti\.com\/product\/[^\/?#]+/i,
-  "st.com": /https?:\/\/(?:www\.)?st\.com\/en\/[^\/?#]+\/[^\/?#]+\.html/i,
-  "microchip.com": /https?:\/\/(?:www\.)?microchip\.com\/en-us\/product\/[^\/?#]+/i,
-  "aliexpress.com": /https?:\/\/(?:www\.)?aliexpress\.com\/item\/[^\/?#]+\.html/i,
-  "amazon.com": /https?:\/\/(?:www\.)?amazon\.com\/[^\/?#]+\/dp\/[A-Z0-9]{10}/i,
+  "digikey.com": /https?:\/\/(?:www\.)?digikey\.com\/en\/products\/detail\/[^/]+\/[^/?#]+/i,
+  "mouser.com": /https?:\/\/(?:www\.)?mouser\.com\/ProductDetail\/[^/?#]+/i,
+  "rs-online.com": /https?:\/\/(?:.*\.)?rs-online\.com\/[^?#]*\/p\/[^/?#]+/i,
+  "farnell.com": /https?:\/\/(?:.*\.)?farnell\.com\/[^?#]*\/p\/[^/?#]+/i,
+  "newark.com": /https?:\/\/(?:.*\.)?newark\.com\/[^?#]*\/p\/[^/?#]+/i,
+  "ti.com": /https?:\/\/(?:www\.)?ti\.com\/product\/[^/?#]+/i,
+  "st.com": /https?:\/\/(?:www\.)?st\.com\/en\/[^/?#]+\/[^/?#]+\.html/i,
+  "microchip.com": /https?:\/\/(?:www\.)?microchip\.com\/en-us\/product\/[^/?#]+/i,
+  "aliexpress.com": /https?:\/\/(?:www\.)?aliexpress\.com\/item\/[^/?#]+\.html/i,
+  "amazon.com": /https?:\/\/(?:www\.)?amazon\.com\/[^/?#]+\/dp\/[A-Z0-9]{10}/i,
 };
 
 function timeoutCtrl(ms: number) {
@@ -49,14 +49,24 @@ function timeoutCtrl(ms: number) {
 
 export function extractMpn(text: string): string | null {
   if (!text) return null;
-  // MPN-y często zawierają litery/cyfry/-/_ i brak spacji; bierzemy najdłuższy „token”
   const tokens = text
     .split(/[\s,;:()|]+/)
-    .map(t => t.trim())
-    .filter(t => /^[A-Za-z0-9][A-Za-z0-9\-_\.]{2,}$/.test(t) && !/^(pcs?|piece|unit|pack|the|and|or|for|with)$/i.test(t));
+    .map((t) => t.trim())
+    .filter(
+      (t) =>
+        /^[A-Za-z0-9][A-Za-z0-9\-_.]{2,}$/.test(t) &&
+        !/^(pcs?|piece|unit|pack|the|and|or|for|with)$/i.test(t)
+    );
+
   if (!tokens.length) return null;
-  // heurystyka: preferuj tokeny zawierające cyfry i litery
-  tokens.sort((a, b) => (/\d/.test(b) as any) - (/\d/.test(a) as any) || b.length - a.length);
+
+  // Scoring bez "any": preferuj tokeny zawierające cyfry + dłuższe
+  const score = (t: string): number => {
+    const hasDigit = /\d/.test(t) ? 1 : 0;
+    return hasDigit * 1000 + t.length; // waga cyfr > długość
+  };
+
+  tokens.sort((a, b) => score(b) - score(a));
   return tokens[0] || null;
 }
 
@@ -64,12 +74,13 @@ function normalizeUrl(url: string): string {
   let s = url.trim();
   if (!s) return "";
   if (!/^https?:\/\//i.test(s)) s = "https://" + s;
-  // usuwamy trackingowe fragmenty
   try {
     const u = new URL(s);
     u.hash = "";
     return u.toString();
-  } catch { return s; }
+  } catch {
+    return s;
+  }
 }
 
 // Akceptujemy 2 przypadki:
@@ -77,7 +88,7 @@ function normalizeUrl(url: string): string {
 // 2) 403/503 ale URL pasuje do wzorca karty produktu (prawdopodobna blokada botów)
 async function headOkOrLooksLikeProduct(url: string): Promise<boolean> {
   const norm = normalizeUrl(url);
-  const host = Object.keys(productDetailPatterns).find(d => norm.includes(d));
+  const host = Object.keys(productDetailPatterns).find((d) => norm.includes(d));
   const looksLikeProduct = host ? productDetailPatterns[host].test(norm) : false;
 
   const { ctrl, clear } = timeoutCtrl(FETCH_TIMEOUT_MS);
@@ -92,7 +103,6 @@ async function headOkOrLooksLikeProduct(url: string): Promise<boolean> {
       },
     });
     if (r.status >= 200 && r.status < 400) return true;
-    // fallback GET
     r = await fetch(norm, {
       method: "GET",
       redirect: "follow",
@@ -106,7 +116,7 @@ async function headOkOrLooksLikeProduct(url: string): Promise<boolean> {
     if ((r.status === 403 || r.status === 503) && looksLikeProduct) return true;
     return false;
   } catch {
-    return looksLikeProduct; // jeśli padło na sieci, ale URL wygląda na kartę produktu — dopuść
+    return looksLikeProduct;
   } finally {
     clear();
   }
@@ -155,7 +165,7 @@ export async function resolveBestProductUrl(
   for (const d of domains) {
     for (const q of queries) {
       const candidate = await ddgSearch(q, d);
-      if (candidate && await headOkOrLooksLikeProduct(candidate)) return candidate;
+      if (candidate && (await headOkOrLooksLikeProduct(candidate))) return candidate;
     }
   }
   return null;
