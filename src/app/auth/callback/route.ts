@@ -5,14 +5,18 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
+function html(body: string) {
+  return new Response(`<!doctype html><meta charset="utf-8"><body style="font-family:ui-sans-serif;-webkit-font-smoothing:antialiased;background:#0b1220;color:#e5e7eb;padding:24px"><pre style="white-space:pre-wrap">${body}</pre></body>`, {
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+  });
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const code = url.searchParams.get("code");
-
-  // Pobierz magazyn ciastek Next.js
   const store = await cookies();
 
-  // Klient Supabase z jawnie podanymi getAll/setAll (zalecane na Vercel)
   const supabase = createServerClient(
     process.env.SUPABASE_URL!,
     process.env.SUPABASE_ANON_KEY!,
@@ -21,31 +25,45 @@ export async function GET(req: Request) {
         getAll() {
           return store.getAll().map((c) => ({ name: c.name, value: c.value }));
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => {
-            store.set(name, value, options);
-          });
+        setAll(list) {
+          list.forEach(({ name, value, options }) => store.set(name, value, options));
         },
       },
     }
   );
 
+  const beforeCookies = store.getAll().map(c => ({ name: c.name, value: (c.value ?? "").slice(0, 12) + "…" }));
+
+  let exchangeError: string | null = null;
+  let userId: string | null = null;
+
   if (code) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-    // Krótka diagnostyka do logów Vercel
-    console.log("AUTH CALLBACK exchange", {
-      hasCode: !!code,
-      error: error?.message ?? null,
-      userId: data?.user?.id ?? null,
-    });
-    if (error) {
-      // Jeśli Supabase krzyczy „invalid requested path” albo podobne – pokażmy to w query,
-      // żeby łatwiej było zobaczyć w przeglądarce:
-      return NextResponse.redirect(new URL(`/login?auth_error=${encodeURIComponent(error.message)}`, url.origin));
-    }
-  } else {
-    console.log("AUTH CALLBACK called without code param");
+    exchangeError = error?.message ?? null;
+    userId = data?.user?.id ?? null;
   }
 
-  return NextResponse.redirect(new URL("/dashboard", url.origin));
+  const { data: { user }, error: getUserError } = await supabase.auth.getUser();
+  const afterCookies = store.getAll().map(c => ({ name: c.name, value: (c.value ?? "").slice(0, 12) + "…" }));
+
+  // Jeśli wszystko OK — normalny redirect do dashboard
+  if (!exchangeError && user) {
+    return NextResponse.redirect(new URL("/dashboard", url.origin));
+  }
+
+  // W przeciwnym razie — pokaż twardą diagnostykę (zostaje w przeglądarce)
+  return html(JSON.stringify({
+    message: "Auth callback diagnostics",
+    url: url.toString(),
+    hasCode: !!code,
+    exchangeError,
+    userId,
+    getUserError: getUserError?.message ?? null,
+    cookiesBefore: beforeCookies,
+    cookiesAfter: afterCookies,
+    env: {
+      SUPABASE_URL: process.env.SUPABASE_URL,
+      APP_URL: process.env.NEXT_PUBLIC_APP_URL,
+    },
+  }, null, 2));
 }
