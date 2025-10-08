@@ -7,6 +7,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const currencies = ["EUR", "USD", "GBP"] as const;
 type Currency = typeof currencies[number];
+type LinkStatus = "ok" | "broken" | "missing";
 
 type BomItem = {
   part: string;
@@ -18,7 +19,7 @@ type BomItem = {
   link: string;
   unit_price: number;
   notes?: string;
-  link_status?: "ok" | "broken" | "missing";
+  link_status?: LinkStatus;
   alt_link?: string;
 };
 
@@ -57,7 +58,7 @@ function coerceItem(u: unknown): BomItem {
   };
 }
 
-// ——— LINK VALIDATION ———
+// —— LINK VALIDATION —— //
 const FETCH_TIMEOUT_MS = 5000;
 
 function canonicalize(url: string): string {
@@ -77,16 +78,14 @@ function supplierSearchFallback(supplier: string, query: string) {
   if (sup.includes("amazon")) return `https://www.amazon.com/s?k=${q}`;
   return `https://duckduckgo.com/?q=${q}`;
 }
-async function checkUrl(url: string): Promise<"ok"|"broken"> {
+async function checkUrl(url: string): Promise<Extract<LinkStatus, "ok"|"broken">> {
   const target = canonicalize(url);
   if (!target) return "broken";
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    // HEAD by default; część serwisów nie wspiera — fallback do GET
     let r = await fetch(target, { method: "HEAD", redirect: "follow", signal: ctrl.signal });
     if (r.status >= 200 && r.status < 400) return "ok";
-    // retry GET
     r = await fetch(target, { method: "GET", redirect: "follow", signal: ctrl.signal });
     if (r.status >= 200 && r.status < 400) return "ok";
     return "broken";
@@ -98,36 +97,42 @@ async function checkUrl(url: string): Promise<"ok"|"broken"> {
 }
 
 async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
-  const limited = items.slice(0, 60); // safety cap
-  const results = await Promise.all(limited.map(async (it) => {
-    const link = canonicalize(it.link);
-    if (!link) {
+  const limited = items.slice(0, 60);
+  const results: BomItem[] = await Promise.all(
+    limited.map(async (it): Promise<BomItem> => {
+      const link = canonicalize(it.link);
+      if (!link) {
+        return {
+          ...it,
+          link: "",
+          link_status: "missing",
+          alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim()),
+        };
+      }
+      const st = await checkUrl(link);
+      if (st === "ok") {
+        return { ...it, link, link_status: "ok" };
+      }
       return {
         ...it,
-        link_status: "missing",
-        alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim())
+        link,
+        link_status: "broken",
+        alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim()),
       };
-    }
-    const st = await checkUrl(link);
-    if (st === "ok") return { ...it, link: link, link_status: "ok" };
-    return {
-      ...it,
-      link: link,
-      link_status: "broken",
-      alt_link: supplierSearchFallback(it.supplier || "", `${it.suggested_product || it.part} ${it.spec || ""}`.trim())
-    };
-  }));
-  // dołącz ewentualny ogon bez sprawdzania (jeśli >60)
+    })
+  );
+  // dołącz ogon bez sprawdzania (jeśli >60) — to nadal BomItem
   return results.concat(items.slice(60));
 }
 
-// ——— MAIN ———
+// —— MAIN —— //
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as unknown;
     const prompt = isRecord(body) ? asString(body.prompt) : "";
     const currencyReq = isRecord(body) ? body.currency : undefined;
     const currency: Currency = isCurrency(currencyReq) ? currencyReq : "EUR";
+    const detail = isRecord(body) ? Number((body as Record<string, unknown>).detail) || 3 : 3;
 
     if (!process.env.OPENAI_API_KEY) {
       return new Response(JSON.stringify({ error: "Missing OPENAI_API_KEY" }), { status: 500 });
@@ -156,7 +161,12 @@ export async function POST(req: Request) {
       "Include realistic unit prices in the requested currency.",
     ].join(" ");
 
-    const user = `Task: Create a complete BOM.\nDevice description: ${prompt}\nCurrency: ${currency}\nReturn ONLY valid JSON.`;
+    const user =
+      `Task: Create a complete BOM.\n` +
+      `Device description: ${prompt}\n` +
+      `Currency: ${currency}\n` +
+      `Level of detail: ${detail}/5 (1 = rough modules, 5 = exhaustive itemization)\n` +
+      `Return ONLY valid JSON.`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
