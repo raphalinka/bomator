@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 
 import OpenAI from "openai";
 import { resolveBestProductUrl, buildSearchLinks } from "@/lib/link-resolver";
+import { resolveWithOctopart } from "@/lib/octopart-resolver";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -26,7 +27,7 @@ type BomItem = {
   notes?: string;
   link_status?: LinkStatus;
   alt_link?: string;
-  search_links?: SearchLinks; // <— NOWE: zawsze dokładamy przyciskowe wyszukiwarki
+  search_links?: SearchLinks;
 };
 
 type BomResponse = {
@@ -64,7 +65,7 @@ function coerceItem(u: unknown): BomItem {
   };
 }
 
-// —— LINK VALIDATION —— //
+// —— PROSTA WALIDACJA LINKÓW (HEAD/GET) —— //
 const FETCH_TIMEOUT_MS = 5000;
 
 function canonicalize(url: string): string {
@@ -210,10 +211,34 @@ export async function POST(req: Request) {
       };
     }
 
-    // —— PASS 2: ZAWSZE spróbuj odbudować link po MPN + supplier; jeśli trafiony product-like — podmień —— //
+    // —— PASS_OCTOPART: spróbuj zbudować linki/ceny z Nexar (Octopart) —— //
+    if (process.env.NEXAR_CLIENT_ID && process.env.NEXAR_CLIENT_SECRET) {
+      const queries = safe.items.map(it => (it.suggested_product || it.part).trim()).filter(Boolean);
+      try {
+        const map = await resolveWithOctopart(queries, safe.currency);
+        safe.items = safe.items.map(it => {
+          const key = (it.suggested_product || it.part).trim();
+          const hit = map.get(key);
+          if (hit?.link) {
+            return {
+              ...it,
+              link: hit.link,
+              link_status: "ok" as const,
+              supplier: hit.supplier || it.supplier,
+              suggested_product: hit.mpn ? `${hit.mpn}` : it.suggested_product,
+              unit_price: (typeof hit.unit_price === "number" && hit.unit_price > 0) ? hit.unit_price : it.unit_price,
+            };
+          }
+          return it;
+        });
+      } catch { /* silent */ }
+    }
+
+    // —— PASS_FALLBACK: dla rekordów bez OK linku, spróbuj domenowego resolvera (DDG) —— //
     {
       const repaired = await Promise.all(
         safe.items.map(async (it): Promise<BomItem> => {
+          if (it.link_status === "ok" && it.link) return it;
           const mpnGuess = (it.suggested_product || it.part).trim();
           const best = await resolveBestProductUrl(it.supplier || "", mpnGuess, mpnGuess);
           if (best) return { ...it, link: best, link_status: "ok" as const };
