@@ -142,7 +142,7 @@ export async function POST(req: Request) {
     }
 
     // —— OCTOPART FIRST (Nexar) —— //
-    if (!process.env.NEXAR_CLIENT_ID || !process.env.NEXAR_CLIENT_SECRET) {
+    if (process.env.USE_NEXAR !== "1" || !process.env.NEXAR_CLIENT_ID || !process.env.NEXAR_CLIENT_SECRET) {
       // jeśli brak kluczy — tylko fallback „search buttons”, bez żadnych linków od modelu
       safe.items = safe.items.map((it) => {
         const q = (it.suggested_product || it.part).trim();
@@ -155,7 +155,12 @@ export async function POST(req: Request) {
       });
     } else {
       const queries = safe.items.map(it => (it.suggested_product || it.part).trim()).filter(Boolean);
-      const map = await resolveWithOctopart(queries, safe.currency);
+      let map = new Map<string, { mpn?: string; supplier?: string; link?: string; unit_price?: number }>();
+      try {
+        map = await resolveWithOctopart(queries, safe.currency);
+      } catch (e) {
+        console.warn("Nexar failed, falling back to CSE:", (e as Error)?.message);
+      }
       safe.items = safe.items.map((it) => {
         const key = (it.suggested_product || it.part).trim();
         const hit = map.get(key);
@@ -206,3 +211,5 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: msg }), { status: 500 });
   }
 }
+
+
