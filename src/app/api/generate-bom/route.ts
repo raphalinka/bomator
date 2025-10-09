@@ -2,7 +2,7 @@
 export const dynamic = "force-dynamic";
 
 import OpenAI from "openai";
-import { resolveBestProductUrl, buildSearchLinks } from "@/lib/link-resolver";
+import { buildSearchLinks } from "@/lib/link-resolver";
 import { resolveWithOctopart } from "@/lib/octopart-resolver";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -21,8 +21,8 @@ type BomItem = {
   unit: string;
   spec: string;
   suggested_product: string; // include MPN/SKU if possible
-  supplier: string;          // distributor/manufacturer
-  link: string;              // product detail page if possible
+  supplier: string;
+  link: string;
   unit_price: number;
   notes?: string;
   link_status?: LinkStatus;
@@ -52,6 +52,7 @@ function isCurrency(u: unknown): u is Currency {
 }
 function coerceItem(u: unknown): BomItem {
   const r: Record<string, unknown> = isRecord(u) ? u : {};
+  // <<< KLUCZOWE: nadpisujemy link na "" na starcie >>>
   return {
     part: asString(r.part),
     qty: asNumber(r.qty, 1),
@@ -59,83 +60,13 @@ function coerceItem(u: unknown): BomItem {
     spec: asString(r.spec),
     suggested_product: asString(r.suggested_product),
     supplier: asString(r.supplier),
-    link: asString(r.link),
+    link: "",                          // ignoruj link z modelu
     unit_price: asNumber(r.unit_price, 0),
     notes: r.notes === undefined ? undefined : asString(r.notes),
   };
 }
 
-// —— PROSTA WALIDACJA LINKÓW (HEAD/GET) —— //
-const FETCH_TIMEOUT_MS = 5000;
-
-function canonicalize(url: string): string {
-  let s = url.trim();
-  if (!s) return "";
-  if (!/^https?:\/\//i.test(s)) s = "https://" + s;
-  return s;
-}
-function supplierSearchFallback(supplier: string, query: string) {
-  const q = encodeURIComponent(query);
-  const sup = supplier.toLowerCase();
-  if (sup.includes("digikey")) return `https://www.digikey.com/en/products/result?k=${q}`;
-  if (sup.includes("mouser")) return `https://www.mouser.com/c/?q=${q}`;
-  if (sup.includes("rs")) return `https://rs-online.com/search?searchTerm=${q}`;
-  if (sup.includes("farnell") || sup.includes("newark")) return `https://www.farnell.com/w/search?st=${q}`;
-  if (sup.includes("aliexpress")) return `https://www.aliexpress.com/w/wholesale-${q}.html`;
-  if (sup.includes("amazon")) return `https://www.amazon.com/s?k=${q}`;
-  return `https://duckduckgo.com/?q=${q}`;
-}
-async function checkUrl(url: string): Promise<Extract<LinkStatus,"ok"|"broken">> {
-  const target = canonicalize(url);
-  if (!target) return "broken";
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    let r = await fetch(target, { method: "HEAD", redirect: "follow", signal: ctrl.signal });
-    if (r.status >= 200 && r.status < 400) return "ok";
-    r = await fetch(target, { method: "GET", redirect: "follow", signal: ctrl.signal });
-    if (r.status >= 200 && r.status < 400) return "ok";
-    return "broken";
-  } catch {
-    return "broken";
-  } finally { clearTimeout(t); }
-}
-
-async function annotateLinks(items: BomItem[]): Promise<BomItem[]> {
-  const limited = items.slice(0, 60);
-  const results: BomItem[] = await Promise.all(
-    limited.map(async (it): Promise<BomItem> => {
-      const link = canonicalize(it.link);
-      const mpnGuess = (it.suggested_product || it.part).trim();
-      const searchLinks = buildSearchLinks(mpnGuess);
-
-      if (!link) {
-        return {
-          ...it,
-          link: "",
-          link_status: "missing",
-          alt_link: supplierSearchFallback(it.supplier || "", `${mpnGuess} ${it.spec || ""}`.trim()),
-          search_links: searchLinks,
-        };
-      }
-      const st = await checkUrl(link);
-      if (st === "ok") return { ...it, link, link_status: "ok", search_links: searchLinks };
-      return {
-        ...it,
-        link,
-        link_status: "broken",
-        alt_link: supplierSearchFallback(it.supplier || "", `${mpnGuess} ${it.spec || ""}`.trim()),
-        search_links: searchLinks,
-      };
-    })
-  );
-  return results.concat(items.slice(60).map((it) => {
-    const mpnGuess = (it.suggested_product || it.part).trim();
-    return { ...it, search_links: buildSearchLinks(mpnGuess) };
-  }));
-}
-
-// —— MAIN —— //
+// ——— MAIN ———
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as unknown;
@@ -161,15 +92,14 @@ export async function POST(req: Request) {
           spec: "string",
           suggested_product: "string", // include MPN/SKU if possible
           supplier: "string",
-          link: "https://...",        // product detail page
+          link: "https://...",        // (ignored by server; server will supply real links via Octopart)
           unit_price: 0
         }],
         disclaimer: "string"
       }),
-      "Prefer reputable suppliers (Digi-Key, Mouser, RS Components, Farnell/Newark, Amazon, AliExpress).",
-      "Use direct product detail pages (not search/category pages).",
+      "Prefer reputable suppliers (Digi-Key, Mouser, RS Components, Farnell/Newark).",
       "Include realistic unit prices in the requested currency.",
-      "Always include explicit Manufacturer Part Numbers (MPNs) where applicable, and ensure the suggested_product contains the MPN/SKU if available.",
+      "Always include explicit MPNs where applicable in suggested_product.",
     ].join(" ");
 
     const user =
@@ -206,46 +136,65 @@ export async function POST(req: Request) {
       safe = {
         title: asString(parsed.title, "Generated BOM"),
         currency: isCurrency(parsed.currency) ? parsed.currency : currency,
-        items: await annotateLinks(rawItems),
+        items: rawItems,
         disclaimer: asString(parsed.disclaimer, safe.disclaimer),
       };
     }
 
-    // —— PASS_OCTOPART: spróbuj zbudować linki/ceny z Nexar (Octopart) —— //
-    if (process.env.NEXAR_CLIENT_ID && process.env.NEXAR_CLIENT_SECRET) {
+    // —— OCTOPART FIRST (Nexar) —— //
+    if (!process.env.NEXAR_CLIENT_ID || !process.env.NEXAR_CLIENT_SECRET) {
+      // jeśli brak kluczy — tylko fallback „search buttons”, bez żadnych linków od modelu
+      safe.items = safe.items.map((it) => {
+        const q = (it.suggested_product || it.part).trim();
+        return {
+          ...it,
+          link: "",
+          link_status: "missing" as const,
+          search_links: buildSearchLinks(q),
+        };
+      });
+    } else {
       const queries = safe.items.map(it => (it.suggested_product || it.part).trim()).filter(Boolean);
-      try {
-        const map = await resolveWithOctopart(queries, safe.currency);
-        safe.items = safe.items.map(it => {
-          const key = (it.suggested_product || it.part).trim();
-          const hit = map.get(key);
-          if (hit?.link) {
-            return {
-              ...it,
-              link: hit.link,
-              link_status: "ok" as const,
-              supplier: hit.supplier || it.supplier,
-              suggested_product: hit.mpn ? `${hit.mpn}` : it.suggested_product,
-              unit_price: (typeof hit.unit_price === "number" && hit.unit_price > 0) ? hit.unit_price : it.unit_price,
-            };
-          }
-          return it;
-        });
-      } catch { /* silent */ }
-    }
+      const map = await resolveWithOctopart(queries, safe.currency);
+      safe.items = safe.items.map((it) => {
+        const key = (it.suggested_product || it.part).trim();
+        const hit = map.get(key);
+        if (hit?.link) {
+          // pewny link + ewentualna cena z oferty
+          return {
+            ...it,
+            link: hit.link,
+            link_status: "ok" as const,
+            supplier: hit.supplier || it.supplier,
+            suggested_product: hit.mpn ? `${hit.mpn}` : it.suggested_product,
+            unit_price: (typeof hit.unit_price === "number" && hit.unit_price > 0) ? hit.unit_price : it.unit_price,
+            search_links: buildSearchLinks(hit.mpn || key),
+          };
+        }
+        // brak w Nexar? nie generuj losowego linku – tylko search buttons
+        const q = key;
+        return {
+          ...it,
+          link: "",
+          link_status: "missing" as const,
+          search_links: buildSearchLinks(q),
+        };
+      });
 
-    // —— PASS_FALLBACK: dla rekordów bez OK linku, spróbuj domenowego resolvera (DDG) —— //
-    {
-      const repaired = await Promise.all(
-        safe.items.map(async (it): Promise<BomItem> => {
-          if (it.link_status === "ok" && it.link) return it;
-          const mpnGuess = (it.suggested_product || it.part).trim();
-          const best = await resolveBestProductUrl(it.supplier || "", mpnGuess, mpnGuess);
-          if (best) return { ...it, link: best, link_status: "ok" as const };
-          return it;
-        })
-      );
-      safe.items = repaired;
+      // (opcjonalnie) włącz DDG fallback tylko gdy chcesz:
+      if (process.env.ENABLE_DDG_FALLBACK === "1") {
+        const { resolveBestProductUrl } = await import("@/lib/link-resolver");
+        const repaired = await Promise.all(
+          safe.items.map(async (it) => {
+            if (it.link_status === "ok" && it.link) return it;
+            const q = (it.suggested_product || it.part).trim();
+            const best = await resolveBestProductUrl(it.supplier || "", q, q);
+            if (best) return { ...it, link: best, link_status: "ok" as const };
+            return it;
+          })
+        );
+        safe.items = repaired;
+      }
     }
 
     return new Response(JSON.stringify(safe), {
